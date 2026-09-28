@@ -30,12 +30,13 @@ def _interp_warp(timeline_t: float, warps: tuple) -> float:
     return pts[-1].content_time
 
 
-def content_range_seconds(clip: AudioClip) -> tuple[float, float]:
+def content_range_seconds(clip: AudioClip, transport: Transport | None = None) -> tuple[float, float]:
     """Map clip playStart..playStart+duration through warp markers to source seconds."""
     if clip.warps:
         t0 = clip.play_start
         t1 = clip.play_start + clip.duration
         return _interp_warp(t0, clip.warps), _interp_warp(t1, clip.warps)
+    # play_start and duration are already in seconds
     return clip.play_start, clip.play_start + clip.duration
 
 
@@ -46,10 +47,12 @@ def _timeline_seconds(clip: AudioClip, transport: Transport, content_sec: float)
 
 
 def needs_audio_processing(clip: AudioClip, transport: Transport, source: Path) -> bool:
-    """True when warp/time-stretch requires baking a derived WAV (not pass-through)."""
+    """True when trim, warp, or time-stretch requires baking a derived WAV."""
+    content_start, content_end = content_range_seconds(clip, transport)
+    if content_start > _STRETCH_TOLERANCE_SEC:
+        return True
     if not clip.algorithm or clip.algorithm == "none":
         return False
-    content_start, content_end = content_range_seconds(clip)
     content_sec = max(0.0, content_end - content_start)
     timeline_sec = _timeline_seconds(clip, transport, content_sec)
     return abs(timeline_sec - content_sec) > _STRETCH_TOLERANCE_SEC
@@ -61,7 +64,7 @@ def pass_through_warnings(clip: AudioClip, source: Path, transport: Transport) -
     label = clip.name or source.name
     total_frames, rate, _, _ = _read_wav_info(source)
     full_sec = total_frames / rate if rate else 0.0
-    content_start, content_end = content_range_seconds(clip)
+    content_start, content_end = content_range_seconds(clip, transport)
     content_sec = max(0.0, content_end - content_start)
 
     if content_start > _STRETCH_TOLERANCE_SEC or content_sec < full_sec - _STRETCH_TOLERANCE_SEC:
@@ -93,7 +96,7 @@ def resolve_audio_clip(
     work_dir: Path,
     transport: Transport,
 ) -> tuple[Path, list[str]]:
-    """Return a WAV path for Logic: original file unless warp/stretch requires processing."""
+    """Return a WAV path for Logic: original file unless warp/stretch/trim requires processing."""
     if needs_audio_processing(clip, transport, source):
         return prepare_audio_clip(clip, source, work_dir, transport)
     return source, pass_through_warnings(clip, source, transport)
@@ -164,11 +167,11 @@ def prepare_audio_clip(
     work_dir: Path,
     transport: Transport,
 ) -> tuple[Path, list[str]]:
-    """Slice and resample audio when warp/time-stretch must be baked into a new WAV."""
+    """Slice and prepare audio when trim or time-stretch is needed."""
     warnings: list[str] = []
     total_frames, rate, channels, sampwidth = _read_wav_info(source)
 
-    content_start, content_end = content_range_seconds(clip)
+    content_start, content_end = content_range_seconds(clip, transport)
     start_frame = max(0, int(round(content_start * rate)))
     end_frame = min(total_frames, int(round(content_end * rate)))
     if end_frame <= start_frame:
@@ -183,20 +186,16 @@ def prepare_audio_clip(
     timeline_sec = _timeline_seconds(clip, transport, content_sec)
     dst_n = max(1, int(round(timeline_sec * rate)))
 
-    if abs(timeline_sec - content_sec) > _STRETCH_TOLERANCE_SEC:
+    is_time_stretched = clip.algorithm and clip.algorithm != "none" and abs(timeline_sec - content_sec) > _STRETCH_TOLERANCE_SEC
+    if is_time_stretched:
         warnings.append(
             f"audio '{clip.name or source.name}': time-stretch ({clip.algorithm}) "
             f"approximated by resampling {content_sec:.3f}s -> {timeline_sec:.3f}s"
         )
         raw = _resample_linear(raw, channels, sampwidth, src_n, dst_n)
-    elif dst_n < src_n:
-        raw = _resample_linear(raw, channels, sampwidth, src_n, dst_n)
-    elif dst_n > src_n:
-        warnings.append(
-            f"audio '{clip.name or source.name}': region shorter than source slice "
-            f"({dst_n} vs {src_n} frames); truncating"
-        )
-        raw = raw[: dst_n * channels * sampwidth]
+    else:
+        if dst_n < src_n:
+            raw = raw[: dst_n * channels * sampwidth]
 
     if clip.fade_in or clip.fade_out:
         warnings.append(

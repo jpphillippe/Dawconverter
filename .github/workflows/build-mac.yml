@@ -1,0 +1,50 @@
+name: Build macOS App
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies & Apply patches
+        run: |
+          python -m pip install --upgrade pip
+          python apply_patches.py
+          pip install -e .
+          pip install -e third_party/LogicProFormatWriter
+          pip install pyinstaller
+
+      - name: Build macOS .app with PyInstaller
+        run: |
+          pyinstaller --noconsole --windowed --clean \
+            --name "DAW-Logic-Bridge" \
+            --paths="third_party/LogicProFormatWriter" \
+            --collect-all logicx \
+            --collect-all daw2logic \
+            converter_gui.py
+
+      - name: Archive .app with ditto
+        run: |
+          cd dist
+          ditto -c -k --keepParent "DAW-Logic-Bridge.app" "DAW-Logic-Bridge-macOS.zip"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DAW-Logic-Bridge-macOS
+          path: dist/DAW-Logic-Bridge-macOS.zip
+          retention-days: 14

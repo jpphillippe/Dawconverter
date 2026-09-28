@@ -19,9 +19,20 @@ def _optional_float(el: ET.Element, name: str) -> float | None:
 
 def _parse_warps(clip: ET.Element) -> AudioClip | None:
     warps_el = clip.find("Warps")
-    if warps_el is None:
-        return None
-    audio = warps_el.find("Audio")
+    if warps_el is not None:
+        audio = warps_el.find("Audio")
+        warp_pts = tuple(
+            WarpPoint(time=_float_attr(w, "time"), content_time=_float_attr(w, "contentTime"))
+            for w in warps_el.findall("Warp")
+        )
+        warp_time_unit = warps_el.get("timeUnit", "beats")
+        content_time_unit = warps_el.get("contentTimeUnit", "seconds")
+    else:
+        audio = clip.find("Audio")
+        warp_pts = ()
+        warp_time_unit = "beats"
+        content_time_unit = "seconds"
+
     if audio is None:
         return None
     file_el = audio.find("File")
@@ -29,10 +40,7 @@ def _parse_warps(clip: ET.Element) -> AudioClip | None:
         return None
     rate_raw = audio.get("sampleRate")
     ch_raw = audio.get("channels")
-    warp_pts = tuple(
-        WarpPoint(time=_float_attr(w, "time"), content_time=_float_attr(w, "contentTime"))
-        for w in warps_el.findall("Warp")
-    )
+
     return AudioClip(
         start=0.0,
         duration=_float_attr(clip, "duration"),
@@ -45,8 +53,8 @@ def _parse_warps(clip: ET.Element) -> AudioClip | None:
         fade_out=_optional_float(clip, "fadeOutTime"),
         fade_time_unit=clip.get("fadeTimeUnit"),
         warps=warp_pts,
-        warp_time_unit=warps_el.get("timeUnit", "beats"),
-        content_time_unit=warps_el.get("contentTimeUnit", "seconds"),
+        warp_time_unit=warp_time_unit,
+        content_time_unit=content_time_unit,
         algorithm=audio.get("algorithm"),
     )
 
@@ -116,11 +124,13 @@ def _collect_audio(
         if parsed is not None and nested is None:
             duration = parsed.duration or _float_attr(clip, "duration")
             play_start = parsed.play_start
-            if parent is not None and parsed.warps and _is_full_span_reference(duration, parsed.warps):
-                parent_duration = _float_attr(parent, "duration")
-                if parent_duration > 0:
-                    duration = parent_duration
-                    play_start = _float_attr(parent, "playStart")
+            if parent is not None:
+                parent_ps = _float_attr(parent, "playStart")
+                if parent_ps > 0:
+                    play_start = parent_ps
+                parent_dur = _float_attr(parent, "duration")
+                if parent_dur > 0:
+                    duration = parent_dur
             out.append(
                 AudioClip(
                     start=start,

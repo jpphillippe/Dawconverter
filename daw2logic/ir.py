@@ -51,6 +51,7 @@ class AudioClip:
     warp_time_unit: str = "beats"
     content_time_unit: str = "seconds"
     algorithm: str | None = None
+    enabled: bool = True
 
 
 @dataclass(frozen=True)

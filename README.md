@@ -1,3 +1,4 @@
+<img width="500" height="500" alt="icon" src="https://github.com/user-attachments/assets/a9d47fcc-ff0c-4ee2-8bc3-2848684a69cc" />
 # DAW-Logic Bridge
 
 **Lossless 2-way project bridge between Cubase / DAWproject (`.dawproject`) and Apple Logic Pro (`.logicx`).**

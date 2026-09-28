@@ -125,36 +125,4 @@ daw2logic song.dawproject -o song.logicx --force   # overwrite existing
 Convert Logic Pro → DAWproject:
 code
 Bash
-python logic2daw.py song.logicx -o song.dawproject
-Experimental WebAssembly Converter
-A client-side WebAssembly build runs directly in your browser:
-Drop a .dawproject file -> get a .logicx.zip download.
-100% local processing — no audio files are ever uploaded to any server.
-Open Web Converter
-Development & Local Build
-Setup:
-code
-Bash
-git clone --recursive https://github.com/jpphillippe/Dawconverter.git
-cd Dawconverter
-python -m venv .venv
-# Windows: .\.venv\Scripts\Activate.ps1 | macOS/Linux: source .venv/bin/activate
-pip install -e .
-pip install -e third_party/LogicProFormatWriter
-pip install pillow pyinstaller
-Build Standalone Executables:
-Windows (.exe):
-code
-Powershell
-python -m PyInstaller --noconsole --windowed --clean --onefile `
-  --name "DAW-Logic-Bridge" `
-  --icon="icon.ico" `
-  --add-data "third_party/LogicProFormatWriter/logicx/data;logicx/data" `
-  --paths="third_party/LogicProFormatWriter" `
-  --collect-all logicx `
-  --collect-all daw2logic `
-  converter_gui.py
-macOS (.app):
-macOS application bundles build automatically in the cloud via GitHub Actions on every push to main (see .github/workflows/build-mac.yml).
-License
-MIT License. Built on open standards by DAWproject and reverse-engineered with LogicProFormatWriter.
+python logic2daw.pyong.logicx -o song.dawproject

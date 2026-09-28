@@ -21,3 +21,13 @@ dist/
 web/wasm/*.wasm
 web/wasm/logicx/
 nuitka-crash-report.xml
+.venv/
+dist/
+build/
+*.ico
+*.icns
+*.seed
+*.dawproject
+*.logicx
+*.wav
+*.flac

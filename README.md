@@ -1,158 +1,158 @@
-<a href="https://audiohacking.github.io/daw2logic/"><img width="200" src="https://github.com/user-attachments/assets/9d709079-c1b6-4cf2-9729-7a3a94edfff3" /></a>
+# DAW-Logic Bridge
 
-# daw2logic
+**Lossless 2-way project bridge between Cubase / DAWproject (`.dawproject`) and Apple Logic Pro (`.logicx`).**
 
-Convert [DAWproject](https://github.com/bitwig/dawproject) (`.dawproject`) files to Logic Pro (`.logicx`) projects.
+Available as a standalone desktop GUI app (macOS & Windows), a portable Python CLI, and an experimental in-browser WASM converter.
 
-The converter is a portable Python CLI (Linux and macOS). It uses [LogicProFormatWriter](https://github.com/geoffmyers/LogicProFormatWriter) to synthesize Logic `ProjectData` and writes sidecars for data that is not yet safe or complete in the binary format.
+---
 
-## Requirements
+## Why This Exists
 
-- Python 3.10+
-- Git (for submodules)
-- Logic Pro on macOS — optional, for manual playback checks and reverse-engineering fixtures
+Traditional stem bouncing requires rendering every track from Bar 1 to the end of the song. For a 30-track session, this easily balloons to **4 to 6+ GB of dead silence** and slows down client transfers.
 
-## WASM
+**DAW-Logic Bridge** transfers projects with **discrete clip boundaries intact**:
+- **Tiny file sizes:** Only actual audio clips are packaged (saving gigabytes of wasted silence).
+- **Fast transfers:** Sessions transfer in seconds over standard internet connections.
+- **True timeline structure:** Audio regions stay cut, movable, and slip-editable with volume, pan, and mute states preserved.
+- **100% Lossless:** Stems transfer at full bit-depth and sample rate with zero compression loss.
 
-Convert DAWproject to Logic Pro `.logicx` in your browser with the [Experimental WASM Browser App](https://audiohacking.github.io/daw2logic/)
+---
 
-## Local
+## Download Standalone Desktop App
 
-Use pre-built executables for **Linux x86_64** or **macOS arm64**
+No Python, terminal, or dependencies required.
 
-### **macOS (Apple Silicon)**
+| Platform | Download | Format |
+| :--- | :--- | :--- |
+| **macOS (Apple Silicon & Intel)** | [Download Latest macOS App](https://github.com/jpphillippe/Dawconverter/actions) | `.app` inside `.zip` |
+| **Windows 10 / 11** | [Download Latest Windows App](https://github.com/jpphillippe/Dawconverter/actions) | Standalone `.exe` |
 
-```bash
-curl -fsSL -o daw2logic https://github.com/audiohacking/daw2logic/releases/latest/download/daw2logic-macos-arm64
-chmod +x daw2logic
-xattr -dr com.apple.quarantine daw2logic 2>/dev/null || true
-./daw2logic song.dawproject -o song.logicx
-```
+> **First-time opening on macOS (Apple Gatekeeper):**  
+> Because the app is open-source and not notarized through an Apple Developer account, macOS will show a security warning if you double-click it.  
+> **To open:** Right-click (or Control-click) `DAW-Logic-Bridge.app` -> choose **Open** -> click **Open** in the confirmation dialog. You only need to do this once.
 
-### **Linux**
+---
 
-```bash
-curl -fsSL -o daw2logic https://github.com/audiohacking/daw2logic/releases/latest/download/daw2logic-linux-x86_64
-chmod +x daw2logic
-./daw2logic song.dawproject -o song.logicx
-```
+## Recommended Studio Workflows
 
-## Local Build
+> **Important Note on Plugins & Automation:**  
+> Proprietary plugin chains (VST3 vs. Apple AU), channel EQs, and software instruments cannot translate natively between DAWs. **Always bake in synths, plugins, or automation you want preserved before exporting!**
 
-Build locally: `bash scripts/build_cli.sh` (requires Python 3.11+ and PyInstaller; output under `dist/`).
+---
 
-```bash
-git clone https://github.com/audiohacking/daw2logic.git
-cd daw2logic
-bash scripts/setup_dev.sh   # submodules, editable installs, demo fixtures
-pytest
-```
+### Workflow 1: Logic Pro → Cubase (macOS)
 
-## Usage
+#### Step A: Prepare the Logic Pro Project
+1. **Save your project** before starting.
+2. **Select all regions on the timeline:**
+   - Press `Cmd + A` (or Shift-select the parts you want to render).
+3. **Open Bounce in Place:**
+   - Right-click any highlighted region and choose **Bounce in Place...** (or press `Ctrl + B`).
+4. **Configure the Bounce dialog:**
+   - **Destination:** *New Track*
+   - **Bypass Effect Plug-ins:** *Uncheck* (bakes synths, AU plugins, and insert FX into the audio).
+   - **Include Audio Tail in File:** *Check* (prevents reverb/delay tails from cutting off).
+   - **Include Volume/Pan Automation:** *Check* (bakes fader moves into the audio).
+   - Click **OK**.
+5. Logic will render each region into its own discrete audio clip at its exact timeline position on new audio tracks.
+6. Group the newly rendered tracks together, delete or mute the old MIDI/synth tracks, and save your project.
 
+#### Step B: Convert to DAWproject
+1. Open **`DAW-Logic-Bridge.app`** (Right-click > Open on first launch).
+2. Choose **Logic Pro (.logicx) → DAWproject (.dawproject)**.
+3. **Input:** Select your rendered `.logicx` project folder.
+4. Click **START CONVERSION**.
+5. Send the generated `..._from_logic.dawproject` file to your collaborator. Done!
+
+---
+
+### Workflow 2: Cubase → Logic Pro (Windows)
+
+#### Step A: Prepare the Cubase Project
+1. **Save your project** before starting.
+2. **Select all parts on the timeline** you want to render (`Ctrl + A` or Shift-select).
+3. Shift + Right-click one of the parts -> **Render in Place > Render Settings**:
+   - **Mode:** *As Block Events* (or *As Separate Events*)
+   - **Processing:** *Complete Signal Path*
+   - **Tail Size:** *3 to 5 Seconds* (for reverb/delay tails)
+   - **Bit Depth:** Match project (24-bit recommended)
+   - **Mixdown to one audio file:** *Must be UNCHECKED*
+   - **Source Tracks:** *Mute Source Events*
+4. Click **Render**.
+5. Move the new rendered tracks together, remove/hide the old tracks, and go to:  
+   **File → Export → DAWproject**.
+
+#### Step B: Convert to Logic Pro
+1. Open **`DAW-Logic-Bridge.exe`**.
+2. Choose **Cubase / DAWproject → Logic Pro (.logicx)**.
+3. **Input:** Select your exported `.dawproject` file.
+4. Click **START CONVERSION**.
+5. **IMPORTANT FOR MAC TRANSFER:**  
+   Logic sessions are folder packages. You **must zip the folder** before transferring:
+   - Right-click the newly generated `YourSong.logicx` folder.
+   - Choose **Compress to ZIP file** (Windows 11) or **Send to → Compressed folder** (Windows 10 / 7-Zip).
+6. Send the zipped `YourSong.logicx.zip` file to your Mac client. Done!
+
+---
+
+## What Converts
+
+| Feature | Support Level | Notes |
+| :--- | :--- | :--- |
+| **Audio Regions & Waveforms** | **100% Lossless** | Sample-accurate timeline placement, discrete cuts preserved |
+| **Track Names & Ordering** | **100% Match** | Dynamic channel mapping matching arrange order |
+| **Timeline Placement** | **100% Match** | Exact beat and tick positioning |
+| **Mute States** | **100% Preserved** | Individual clip enable/mute flags respected |
+| **Tempo & Time Signatures** | **100% Preserved** | BPM and meter maps transferred |
+| **Sample Rate** | **Automatic** | Initializes audio engine to match source session (44.1k, 48k, etc.) |
+| **Volume Automation** | Sidecar JSON | Exported to `Media/daw2logic Import/automation/` |
+| **EQ (DAWproject Equalizer)** | Sidecar JSON | Exported to `Media/daw2logic Import/eq/` |
+| **VST / AU Plugins** | ❌ Incompatible | Logic strictly uses AU; Cubase uses VST3. Bake before export! |
+
+---
+
+## Command Line Usage (CLI)
+
+For automated server scripts, WSL, or headless environments:
+
+### Convert DAWproject → Logic Pro:
 ```bash
 daw2logic song.dawproject -o song.logicx
-daw2logic song.dawproject -o song.logicx --force   # replace existing bundle
-daw2logic song.dawproject -o song.logicx --report report.json  # optional JSON report
-```
+daw2logic song.dawproject -o song.logicx --force   # overwrite existing
 
-On success the CLI is quiet. Conversion notes (warnings, skipped items, stats) are written to `song.txt` beside the output bundle. Errors go to stderr. Use `--report` for structured JSON instead of or in addition to the text notes.
-
-## Browser converter (experimental)
-
-A WebAssembly build runs in the browser — drop a `.dawproject` file, get a `.logicx.zip` download. Nothing is uploaded to a server. Deployed via GitHub Pages on each push to `main` (see **wasm-pages** workflow). Local build: [`docs/WASM.md`](docs/WASM.md).
-
-## Dependencies (git submodules)
-
-| Submodule | Purpose |
-|-----------|---------|
-| [`third_party/LogicProFormatWriter`](third_party/LogicProFormatWriter) | Writes Logic `ProjectData` / `.logicx` bundles (`logicx` Python package) |
-| [`third_party/LogicFiles`](third_party/LogicFiles) | AU preset format reference; macOS validation via `scripts/macos/validate_au_sidecar.sh` |
-| [`third_party/dawproject`](third_party/dawproject) | Format reference + demo WAV for test fixtures |
-
-## What converts today
-
-| Feature | Native in `.logicx` | Notes |
-|---------|---------------------|-------|
-| Tempo (constant + maps) | Yes | Via LogicProFormatWriter |
-| Meter maps | Yes | |
-| Markers | Yes | |
-| MIDI notes + clip names | Yes | Instrument tracks |
-| Audio regions | Yes | Original WAVs copied; time-stretch baked only when DAWproject declares warp/stretch |
-| Track / region names | Yes | Reuses mixed-base template Inst 1 / Audio 1 slots |
-| Track order | Yes | Interleaved DAWproject order preserved in arrange window |
-| AU plugin presets | Sidecar | Copied to `Media/daw2logic Import/plugins/` |
-| Mixer volume / pan / mute | Native | Logic-validated on `bitwig_simple` / `bitwig_mixer` (±0.1 dB). `@0x79` gate + `@0x98` float |
-| EQ (DAWproject Equalizer) | Sidecar | Bands → Logic Channel EQ JSON in `Media/daw2logic Import/eq/` |
-| Track / clip colors | Sidecar | Parsed to manifest; native ProjectData graft disabled (corrupts Logic) |
-| Automation | Sidecar | Per-track JSON under `Media/daw2logic Import/automation/` |
-| VST / CLAP plugins | Skipped | No Logic slot |
-| Clip fades | Warning only | Not in LogicProFormatWriter yet |
-| Audio warp / trim | Warning or resample | Original file preserved unless stretch algorithm needs baking |
-
-After conversion, open the `.logicx` bundle in Logic Pro to verify playback. AU presets, EQ, and colors in sidecars must be applied manually until native embedding is fully validated.
-
-
-## Sidecar layout
-
-```
-song.logicx/
-  Media/daw2logic Import/
-    manifest.json       # per-track plugins, mixer, automation, color references
-    README.txt
-    plugins/            # copied .aupreset files
-    eq/                 # Channel EQ band data as JSON
-    automation/         # automation curves as JSON
-```
-
-## Development
-
-Tests are driven by demo fixtures built from the [Bitwig DAWproject example](third_party/dawproject/README.md):
-
-| Fixture | Contents |
-|---------|----------|
-| `bitwig_simple.dawproject` | Bass MIDI + drumloop audio @ 149 BPM, mixer levels |
-| `bitwig_mixer.dawproject` | Pan + mute + volume (Logic-validated) |
-| `bitwig_extended.dawproject` | Tempo map + markers |
-| `bitwig_interleaved.dawproject` | Same as simple but audio track before instrument |
-| `bitwig_au.dawproject` | AU plugin + volume automation (requires LogicFiles submodule) |
-
-Native AU embedding research: [`docs/AU_EMBEDDING.md`](docs/AU_EMBEDDING.md)
-
-Build fixtures: `python tests/fixtures/build_bitwig_simple.py`
-
-CI runs `pytest` on Ubuntu and macOS (Python 3.11 and 3.12). Publishing a GitHub release builds standalone Linux/macOS binaries and attaches them to the release (**release** workflow). WASM builds use ccache and a zlib object cache to speed up repeat runs.
-
-### macOS: validate bundled AU presets
-
-```bash
-daw2logic tests/fixtures/bitwig_au.dawproject -o out.logicx
-bash scripts/macos/validate_au_sidecar.sh out.logicx
-```
-
-### Reverse-engineering: OCuA mixer fields
-
-Logic stores fader/pan/mute in 205-byte `OCuA` channel strips. Volume uses `@0x79` gate + `@0x98` float (see `mixer_logic.py`). To capture new calibration points:
-
-1. Run `bash scripts/macos/capture_mixer_fixture.sh` (or convert manually, change one fader in Logic, save)
-2. Diff strips: `python tools/ocua_mixer_re.py re.logicx re_vol.logicx --channel 0x580000`
-
-Automated fader moves require Accessibility permission for Terminal/Cursor; the capture script uses a manual save step.
-
-See [`scripts/re/README.md`](scripts/re/README.md) and [`daw2logic/mixer_logic.py`](daw2logic/mixer_logic.py) for wiring discovered offsets into the converter.
-
-## Architecture
-
-```
-.dawproject (ZIP+XML)
-  → parser / flatten → IR
-  → logicx synthesize_av_region_bundle → .logicx
-  → transport_logic (tempo / meter / markers)
-  → track_order (reuse template Inst 1 / Audio 1; interleaved arrange reorder)
-  → mixer_logic (OCuA patching when offsets known)
-  → plugins.export_sidecars (AU / EQ / automation / color manifest JSON)
-```
-
-## License
-
-MIT
+Convert Logic Pro → DAWproject:
+code
+Bash
+python logic2daw.py song.logicx -o song.dawproject
+Experimental WebAssembly Converter
+A client-side WebAssembly build runs directly in your browser:
+Drop a .dawproject file -> get a .logicx.zip download.
+100% local processing — no audio files are ever uploaded to any server.
+Open Web Converter
+Development & Local Build
+Setup:
+code
+Bash
+git clone --recursive https://github.com/jpphillippe/Dawconverter.git
+cd Dawconverter
+python -m venv .venv
+# Windows: .\.venv\Scripts\Activate.ps1 | macOS/Linux: source .venv/bin/activate
+pip install -e .
+pip install -e third_party/LogicProFormatWriter
+pip install pillow pyinstaller
+Build Standalone Executables:
+Windows (.exe):
+code
+Powershell
+python -m PyInstaller --noconsole --windowed --clean --onefile `
+  --name "DAW-Logic-Bridge" `
+  --icon="icon.ico" `
+  --add-data "third_party/LogicProFormatWriter/logicx/data;logicx/data" `
+  --paths="third_party/LogicProFormatWriter" `
+  --collect-all logicx `
+  --collect-all daw2logic `
+  converter_gui.py
+macOS (.app):
+macOS application bundles build automatically in the cloud via GitHub Actions on every push to main (see .github/workflows/build-mac.yml).
+License
+MIT License. Built on open standards by DAWproject and reverse-engineered with LogicProFormatWriter.

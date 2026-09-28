@@ -1,4 +1,4 @@
-import sys, os, struct, plistlib, zipfile, wave, threading
+import sys, os, struct, plistlib, zipfile, wave, threading, re
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import tkinter as tk
@@ -7,6 +7,19 @@ from tkinter import ttk, filedialog, messagebox
 # Import core dependencies
 from logicx.projectdata import ProjectData, IVNE_IDX, _u32
 from daw2logic.convert import convert_file
+
+# ==============================================================================
+# HELPER: XML STRING SANITIZATION
+# ==============================================================================
+def _clean_str(s: str) -> str:
+    """Strip null bytes and non-printable control characters that break XML."""
+    if not s:
+        return ""
+    # Cut off at first null byte if present (Pascal / C-string hybrid in Logic)
+    s = s.split("\x00")[0]
+    # Remove XML-invalid control characters (ASCII 0x00-0x1F except tab 0x09 and newline 0x0A/0x0D)
+    s = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffd]", "", s)
+    return s.strip()
 
 # ==============================================================================
 # LOGIC -> DAWPROJECT CONVERSION ENGINE
@@ -43,7 +56,8 @@ def run_logic_to_daw(logicx_dir: Path, out_dawproject: Path, status_cb):
             chan = _u32(r.raw, 0x08)
             if chan >= 0x5c0000:
                 nlen = struct.unpack_from('<H', r.raw, 0xc2)[0] if len(r.raw) > 0xc4 else 0
-                name = r.raw[0xc4:0xc4 + nlen].decode('latin-1', 'replace').strip() if nlen else ''
+                raw_name = r.raw[0xc4:0xc4 + nlen].decode('latin-1', 'replace') if nlen else ''
+                name = _clean_str(raw_name)
                 if name:
                     audio_channels.append((chan, name))
 
@@ -66,7 +80,7 @@ def run_logic_to_daw(logicx_dir: Path, out_dawproject: Path, status_cb):
     structure = ET.SubElement(root, 'Structure')
     for t_num in sorted(track_names.keys()):
         t_id = f'id_track_{t_num}'
-        t_name = track_names[t_num]
+        t_name = _clean_str(track_names[t_num])
         t_el = ET.SubElement(structure, 'Track', id=t_id, name=t_name, contentType='audio', loaded='true')
         ch = ET.SubElement(t_el, 'Channel', role='regular', audioChannels='2', id=f'id_chan_{t_num}', name=t_name)
         ET.SubElement(ch, 'Pan', value='0.5', unit='normalized', min='0', max='1')
@@ -101,16 +115,24 @@ def run_logic_to_daw(logicx_dir: Path, out_dawproject: Path, status_cb):
 
             sample_len = 0
             is_muted = False
+            r_name = ""
             if 'gRuA' in slots:
                 gr = pd.records[slots['gRuA']]
                 sample_len = struct.unpack_from('<I', gr.raw, 0x24 + pd.GRUA_SAMPLELEN_OFF)[0]
-                # Check Logic's muted region bit flag
+                # Check Logic's muted region bit flag at offset 0x34
                 if len(gr.raw) > 0x36:
                     flags = struct.unpack_from('<H', gr.raw, 0x34)[0]
                     is_muted = bool(flags & 0x01)
+                # Check region display name
+                try:
+                    name_len = struct.unpack_from('<H', gr.raw, 0x24 + 0x4a)[0]
+                    if name_len > 0:
+                        r_name = gr.raw[0x24 + 0x4c : 0x24 + 0x4c + name_len].decode('latin-1', 'replace')
+                except Exception:
+                    pass
 
             duration_sec = round(sample_len / float(sample_rate), 6) if sample_len > 0 else 2.0
-            display_name = Path(wav_filename).stem
+            display_name = _clean_str(r_name) if r_name else Path(wav_filename).stem
             enable_val = 'false' if is_muted else 'true'
 
             outer_clip = ET.SubElement(clips_container, 'Clip', time=clip_time_str, duration=str(duration_sec),
@@ -121,7 +143,8 @@ def run_logic_to_daw(logicx_dir: Path, out_dawproject: Path, status_cb):
             ET.SubElement(audio_el, 'File', path=f'audio/{wav_filename}', external='false')
 
     meta_root = ET.Element('MetaData', version='1.0')
-    ET.SubElement(meta_root, 'Title').text = logicx_dir.stem
+    meta_title = _clean_str(logicx_dir.stem)
+    ET.SubElement(meta_root, 'Title').text = meta_title
     ET.SubElement(meta_root, 'Application', name='Logic-DAWproject-Bridge', version='1.0.0')
 
     status_cb(f'Packaging {len(used_wav_files)} audio files into .dawproject...')
@@ -161,7 +184,6 @@ class ConverterApp(tk.Tk):
         self._build_ui()
 
     def _set_app_icon(self):
-        # Look for icon.png or icon.ico in app bundle or script directory
         base_dir = Path(__file__).parent
         png_icon = base_dir / 'icon.png'
         ico_icon = base_dir / 'icon.ico'

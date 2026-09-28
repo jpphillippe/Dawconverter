@@ -6,7 +6,6 @@ from tkinter import ttk, filedialog, messagebox
 
 # Import core dependencies
 from logicx.projectdata import ProjectData, IVNE_IDX, _u32
-from daw2logic.track_order import audio_channels
 from daw2logic.convert import convert_file
 
 # ==============================================================================
@@ -15,66 +14,75 @@ from daw2logic.convert import convert_file
 def run_logic_to_daw(logicx_dir: Path, out_dawproject: Path, status_cb):
     status_cb('Reading Logic Pro bundle...')
     meta_path = logicx_dir / 'Alternatives/000/MetaData.plist'
-    meta = plistlib.loads(meta_path.read_bytes())
-    tempo = float(meta.get('BeatsPerMinute', 120.0))
-    sample_rate = int(meta.get('SampleRate', 44100))
-    ts_num = int(meta.get('SongSignatureNumerator', 4))
-    ts_den = int(meta.get('SongSignatureDenominator', 4))
+    sample_rate = 44100
+    tempo = 120.0
+    ts_num = 4
+    ts_den = 4
+
+    if meta_path.is_file():
+        meta = plistlib.loads(meta_path.read_bytes())
+        sample_rate = int(meta.get('SampleRate', 44100))
+        tempo = float(meta.get('BeatsPerMinute', 120.0))
+        ts_num = int(meta.get('SongSignatureNumerator', 4))
+        ts_den = int(meta.get('SongSignatureDenominator', 4))
 
     pd_path = logicx_dir / 'Alternatives/000/ProjectData'
     pd = ProjectData.parse(pd_path.read_bytes())
     slots_by_idx = pd._region_records_by_index()
 
-    status_cb('Resolving track names and mixer buses...')
-    aud_map = audio_channels(pd)
-    track_names = {}
-    for track_num, chan_id in aud_map.items():
-        iv = next((r for r in pd.records if r.tag == b'ivnE' and _u32(r.raw, IVNE_IDX) == chan_id), None)
-        if iv and len(iv.raw) > 0xc4:
-            n = struct.unpack_from('<H', iv.raw, 0xc2)[0]
-            name = iv.raw[0xc4:0xc4 + n].decode('latin-1', 'replace').strip()
-            track_names[track_num] = name if name else f'Audio {track_num}'
-        else:
-            track_names[track_num] = f'Audio {track_num}'
-
-    placements = pd.audio_placements()
+    status_cb('Extracting timeline placements and audio tracks...')
+    placements = list(pd.audio_placements())
     clips_by_track = {}
     for p in placements:
         clips_by_track.setdefault(p['track'], []).append(p)
+
+    # Resolve track names dynamically from ivnE audio channels (>= 0x5c0000)
+    audio_channels = []
+    for r in pd.records:
+        if r.tag == b'ivnE':
+            chan = _u32(r.raw, 0x08)
+            if chan >= 0x5c0000:
+                nlen = struct.unpack_from('<H', r.raw, 0xc2)[0] if len(r.raw) > 0xc4 else 0
+                name = r.raw[0xc4:0xc4 + nlen].decode('latin-1', 'replace').strip() if nlen else ''
+                if name:
+                    audio_channels.append((chan, name))
+
+    audio_channels.sort(key=lambda x: x[0])
+    track_names = {}
+    for t_idx in sorted(clips_by_track.keys()):
+        if t_idx <= len(audio_channels):
+            track_names[t_idx] = audio_channels[t_idx - 1][1]
+        else:
+            track_names[t_idx] = f'Audio {t_idx}'
 
     status_cb(f'Constructing DAWproject XML ({len(placements)} regions across {len(track_names)} tracks)...')
     root = ET.Element('Project', version='1.0')
     ET.SubElement(root, 'Application', name='Logic-DAWproject-Bridge', version='1.0.0')
 
     transport = ET.SubElement(root, 'Transport')
-    ET.SubElement(transport, 'Tempo', value=str(tempo))
+    ET.SubElement(transport, 'Tempo', unit='bpm', value=str(tempo))
     ET.SubElement(transport, 'TimeSignature', numerator=str(ts_num), denominator=str(ts_den))
 
     structure = ET.SubElement(root, 'Structure')
-    # Stereo Out Master Channel (unmutes tracks in Cubase)
-    master_chan = ET.SubElement(structure, 'Channel', role='master', audioChannels='2', id='master_out', name='Stereo Out', color='#90a0b0ff')
-    ET.SubElement(master_chan, 'Mute', value='false', name='Mute')
-    ET.SubElement(master_chan, 'Pan', value='0.5', unit='normalized', min='0', max='1', name='Pan')
-    ET.SubElement(master_chan, 'Volume', value='1', unit='linear', min='0', max='2', name='Volume')
-
     for t_num in sorted(track_names.keys()):
-        t_id = f'track_{t_num}'
-        t_el = ET.SubElement(structure, 'Track', id=t_id, name=track_names[t_num], contentType='audio')
-        ch = ET.SubElement(t_el, 'Channel', role='regular', audioChannels='2', id=f'chan_{t_num}', name=track_names[t_num], destination='master_out')
-        ET.SubElement(ch, 'Mute', value='false', name='Mute')
-        ET.SubElement(ch, 'Pan', value='0.5', unit='normalized', min='0', max='1', name='Pan')
-        ET.SubElement(ch, 'Volume', value='1', unit='linear', min='0', max='2', name='Volume')
+        t_id = f'id_track_{t_num}'
+        t_name = track_names[t_num]
+        t_el = ET.SubElement(structure, 'Track', id=t_id, name=t_name, contentType='audio', loaded='true')
+        ch = ET.SubElement(t_el, 'Channel', role='regular', audioChannels='2', id=f'id_chan_{t_num}', name=t_name)
+        ET.SubElement(ch, 'Pan', value='0.5', unit='normalized', min='0', max='1')
+        ET.SubElement(ch, 'Volume', value='1', unit='linear', min='0', max='2')
 
     arrang = ET.SubElement(root, 'Arrangement')
     master_lanes = ET.SubElement(arrang, 'Lanes', timeUnit='seconds')
     used_wav_files = set()
 
     for t_num in sorted(track_names.keys()):
-        t_id = f'track_{t_num}'
+        t_id = f'id_track_{t_num}'
         track_lanes = ET.SubElement(master_lanes, 'Lanes', track=t_id)
         clips_container = ET.SubElement(track_lanes, 'Clips')
 
-        for p in clips_by_track.get(t_num, []):
+        sorted_placements = sorted(clips_by_track.get(t_num, []), key=lambda x: x['pos'])
+        for p in sorted_placements:
             start_ticks = max(0, p['pos'] - 34560)
             start_beats = round(start_ticks / 960.0, 6)
             clip_time_str = str(int(start_beats) if start_beats.is_integer() else start_beats)
@@ -86,22 +94,27 @@ def run_logic_to_daw(logicx_dir: Path, out_dawproject: Path, status_cb):
 
             r = pd.records[slots['lFuA']]
             nlen = struct.unpack_from('<H', r.raw, 0x24 + 0x08)[0]
-            wav_filename = r.raw[0x24 + 0x0a : 0x24 + 0x0a + nlen * 2].decode('utf-16le', 'ignore')
+            wav_filename = r.raw[0x24 + 0x0a : 0x24 + 0x0a + nlen * 2].decode('utf-16le', 'replace')
 
             disk_wav = logicx_dir / 'Media' / 'Audio Files' / wav_filename
             used_wav_files.add(disk_wav)
 
             sample_len = 0
+            is_muted = False
             if 'gRuA' in slots:
                 gr = pd.records[slots['gRuA']]
                 sample_len = struct.unpack_from('<I', gr.raw, 0x24 + pd.GRUA_SAMPLELEN_OFF)[0]
+                # Check Logic's muted region bit flag
+                if len(gr.raw) > 0x36:
+                    flags = struct.unpack_from('<H', gr.raw, 0x34)[0]
+                    is_muted = bool(flags & 0x01)
 
             duration_sec = round(sample_len / float(sample_rate), 6) if sample_len > 0 else 2.0
-            
-            # Clean display name (strips internal slice hashes for clean DAW timeline view)
-            display_name = wav_filename.split('_')[0] if '_' in wav_filename else Path(wav_filename).stem
+            display_name = Path(wav_filename).stem
+            enable_val = 'false' if is_muted else 'true'
 
-            outer_clip = ET.SubElement(clips_container, 'Clip', time=clip_time_str, duration=str(duration_sec), fadeTimeUnit='seconds', name=display_name, enable='true')
+            outer_clip = ET.SubElement(clips_container, 'Clip', time=clip_time_str, duration=str(duration_sec),
+                                       fadeTimeUnit='seconds', name=display_name, enable=enable_val)
             nested_clips = ET.SubElement(outer_clip, 'Clips')
             inner_clip = ET.SubElement(nested_clips, 'Clip', contentTimeUnit='seconds', time='0', duration=str(duration_sec))
             audio_el = ET.SubElement(inner_clip, 'Audio', sampleRate=str(sample_rate), channels='2', duration=str(duration_sec))
@@ -109,16 +122,14 @@ def run_logic_to_daw(logicx_dir: Path, out_dawproject: Path, status_cb):
 
     meta_root = ET.Element('MetaData', version='1.0')
     ET.SubElement(meta_root, 'Title').text = logicx_dir.stem
+    ET.SubElement(meta_root, 'Application', name='Logic-DAWproject-Bridge', version='1.0.0')
 
-    ET.indent(root, space='  ')
-    ET.indent(meta_root, space='  ')
-
-    status_cb(f'Packaging {len(used_wav_files)} audio files into .dawproject container...')
+    status_cb(f'Packaging {len(used_wav_files)} audio files into .dawproject...')
     with zipfile.ZipFile(out_dawproject, 'w', compression=zipfile.ZIP_DEFLATED) as z:
         z.writestr('project.xml', ET.tostring(root, encoding='utf-8', xml_declaration=True))
         z.writestr('metadata.xml', ET.tostring(meta_root, encoding='utf-8', xml_declaration=True))
         for wav_path in used_wav_files:
-            if wav_path.exists():
+            if wav_path.is_file():
                 z.write(wav_path, arcname=f'audio/{wav_path.name}')
 
 # ==============================================================================
@@ -134,10 +145,13 @@ def run_daw_to_logic(dawproject_file: Path, out_logicx: Path, status_cb):
 class ConverterApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('DAWproject ? Logic Pro Converter')
+        self.title('Audio Project Bridge (Logic ↔ DAWproject)')
         self.geometry('680x450')
         self.resizable(False, False)
         self.configure(bg='#1e1e1e')
+
+        # Load App Icon if available
+        self._set_app_icon()
 
         self.mode = tk.StringVar(value='DAW_TO_LOGIC')
         self.input_path = tk.StringVar()
@@ -145,6 +159,21 @@ class ConverterApp(tk.Tk):
         self.status_text = tk.StringVar(value='Ready. Choose conversion mode and select project.')
 
         self._build_ui()
+
+    def _set_app_icon(self):
+        # Look for icon.png or icon.ico in app bundle or script directory
+        base_dir = Path(__file__).parent
+        png_icon = base_dir / 'icon.png'
+        ico_icon = base_dir / 'icon.ico'
+        
+        try:
+            if sys.platform.startswith('win') and ico_icon.is_file():
+                self.iconbitmap(str(ico_icon))
+            elif png_icon.is_file():
+                img = tk.PhotoImage(file=str(png_icon))
+                self.iconphoto(False, img)
+        except Exception:
+            pass
 
     def _build_ui(self):
         # Header
@@ -159,13 +188,13 @@ class ConverterApp(tk.Tk):
         mode_frame = tk.Frame(self, bg='#1e1e1e')
         mode_frame.pack(pady=15)
 
-        self.rb1 = tk.Radiobutton(mode_frame, text='Cubase / DAWproject  ?  Logic Pro (.logicx)', variable=self.mode,
+        self.rb1 = tk.Radiobutton(mode_frame, text='Cubase / DAWproject  →  Logic Pro (.logicx)', variable=self.mode,
                                   value='DAW_TO_LOGIC', font=('Segoe UI', 10, 'bold'), fg='white', bg='#1e1e1e',
                                   selectcolor='#007acc', activebackground='#1e1e1e', activeforeground='white',
                                   command=self._on_mode_change)
         self.rb1.pack(side='left', padx=15)
 
-        self.rb2 = tk.Radiobutton(mode_frame, text='Logic Pro (.logicx)  ?  DAWproject (.dawproject)', variable=self.mode,
+        self.rb2 = tk.Radiobutton(mode_frame, text='Logic Pro (.logicx)  →  DAWproject (.dawproject)', variable=self.mode,
                                   value='LOGIC_TO_DAW', font=('Segoe UI', 10, 'bold'), fg='white', bg='#1e1e1e',
                                   selectcolor='#007acc', activebackground='#1e1e1e', activeforeground='white',
                                   command=self._on_mode_change)
@@ -176,7 +205,7 @@ class ConverterApp(tk.Tk):
         card.pack(fill='x', padx=30, pady=5)
 
         # Input Row
-        self.lbl_in = tk.Label(card, text='Input DAWproject File:', font=('Segoe UI', 9, 'bold'), fg='#d4d4d4', bg='#2d2d30')
+        self.lbl_in = tk.Label(card, text='Input DAWproject File (.dawproject):', font=('Segoe UI', 9, 'bold'), fg='#d4d4d4', bg='#2d2d30')
         self.lbl_in.grid(row=0, column=0, sticky='w', pady=3)
         self.entry_in = tk.Entry(card, textvariable=self.input_path, width=54, bg='#1e1e1e', fg='white', insertbackground='white')
         self.entry_in.grid(row=1, column=0, padx=(0, 10), pady=(0, 10))
@@ -184,7 +213,7 @@ class ConverterApp(tk.Tk):
         btn_in.grid(row=1, column=1, pady=(0, 10))
 
         # Output Row
-        self.lbl_out = tk.Label(card, text='Output Logic Bundle:', font=('Segoe UI', 9, 'bold'), fg='#d4d4d4', bg='#2d2d30')
+        self.lbl_out = tk.Label(card, text='Output Logic Pro Bundle (.logicx):', font=('Segoe UI', 9, 'bold'), fg='#d4d4d4', bg='#2d2d30')
         self.lbl_out.grid(row=2, column=0, sticky='w', pady=3)
         self.entry_out = tk.Entry(card, textvariable=self.output_path, width=54, bg='#1e1e1e', fg='white', insertbackground='white')
         self.entry_out.grid(row=3, column=0, padx=(0, 10))

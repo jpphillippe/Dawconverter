@@ -28,10 +28,36 @@ jobs:
           pip install -e third_party/LogicProFormatWriter
           pip install pyinstaller
 
+      - name: Generate macOS App Icon
+        run: |
+          if [ -f "icon.png" ]; then
+            echo "icon.png found! Converting to Apple .icns..."
+            mkdir -p icon.iconset
+            sips -z 16 16     icon.png --out icon.iconset/icon_16x16.png
+            sips -z 32 32     icon.png --out icon.iconset/icon_16x16@2x.png
+            sips -z 32 32     icon.png --out icon.iconset/icon_32x32.png
+            sips -z 64 64     icon.png --out icon.iconset/icon_32x32@2x.png
+            sips -z 128 128   icon.png --out icon.iconset/icon_128x128.png
+            sips -z 256 256   icon.png --out icon.iconset/icon_128x128@2x.png
+            sips -z 256 256   icon.png --out icon.iconset/icon_256x256.png
+            sips -z 512 512   icon.png --out icon.iconset/icon_256x256@2x.png
+            sips -z 512 512   icon.png --out icon.iconset/icon_512x512.png
+            sips -z 1024 1024 icon.png --out icon.iconset/icon_512x512@2x.png
+            iconutil -c icns icon.iconset -o icon.icns
+          else
+            echo "No icon.png found in repository root; using default icon."
+          fi
+
       - name: Build macOS .app with PyInstaller
         run: |
+          ICON_FLAG=""
+          if [ -f "icon.icns" ]; then
+            ICON_FLAG="--icon=icon.icns"
+          fi
+
           pyinstaller --noconsole --windowed --clean \
             --name "DAW-Logic-Bridge" \
+            $ICON_FLAG \
             --paths="third_party/LogicProFormatWriter" \
             --collect-all logicx \
             --collect-all daw2logic \
